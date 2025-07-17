@@ -1,6 +1,7 @@
 package main
 
 import (
+	"dida/internal/auth"
 	"dida/internal/server"
 	"fmt"
 	"log"
@@ -12,6 +13,20 @@ import (
 func main() {
 	// 设置日志
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	clientID := "4Fj1OR96WXPQPlu1aK"
+	clientSecret := "7kZL%&l7&zi*22w5Fk+NEk(F77_rDB1o"
+	// 创建认证管理器
+	ticktickAuth := auth.NewTickTickAuth(clientID, clientSecret)
+
+	// 启动认证流程
+	result, err := ticktickAuth.StartAuthFlow()
+	if err != nil {
+		log.Fatalf("Authentication failed: %v", err)
+	}
+
+	log.Println(result)
+	log.Println("You can now start the MCP server.")
 
 	// 以下是原有的服务器启动流程
 	log.Println("Starting TickTick MCP Server...")
