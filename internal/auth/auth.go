@@ -26,16 +26,14 @@ type TickTickAuth struct {
 }
 
 // NewTickTickAuth 创建一个新的TickTick认证管理器
-func NewTickTickAuth(clientID, clientSecret string) *TickTickAuth {
+func NewTickTickAuth(clientID, clientSecret string) (*TickTickAuth, error) {
 	// 加载环境变量
-	_ = godotenv.Load()
-
-	// 如果没有提供客户端ID和密钥，从环境变量获取
-	if clientID == "" {
-		clientID = os.Getenv("TICKTICK_CLIENT_ID")
+	err := godotenv.Load()
+	if err != nil {
+		return nil, err
 	}
-	if clientSecret == "" {
-		clientSecret = os.Getenv("TICKTICK_CLIENT_SECRET")
+	if clientID == "" || clientSecret == "" {
+		return nil, fmt.Errorf("clientID or clientSecret missing")
 	}
 
 	// 获取认证URL
@@ -73,18 +71,18 @@ func NewTickTickAuth(clientID, clientSecret string) *TickTickAuth {
 		Scopes:       scopes,
 		Port:         8000,
 		Config:       config,
-	}
+	}, nil
 }
 
-func (a *TickTickAuth) StartAuthFlow() (string, error) {
+func (a *TickTickAuth) StartAuthFlow() error {
 	if a.ClientID == "" || a.ClientSecret == "" {
-		return "", fmt.Errorf("client ID or client secret missing")
+		return fmt.Errorf("client ID or client secret missing")
 	}
 
 	// 生成随机state 参数
 	state := base64.StdEncoding.EncodeToString([]byte(time.Now().String()))
 	authURL := a.Config.AuthCodeURL(state, oauth2.SetAuthURLParam("response_type", "code"))
-
+	fmt.Println(authURL)
 	// 打开浏览器
 	if err := open.Run(authURL); err != nil {
 		log.Printf("Warning: Failed to open browser: %v", err)
@@ -94,13 +92,13 @@ func (a *TickTickAuth) StartAuthFlow() (string, error) {
 
 	code, err := a.startCallbackServer(state)
 	if err != nil {
-		return "", fmt.Errorf("authorization failed: %w", err)
+		return fmt.Errorf("authorization failed: %w", err)
 	}
 
 	// 交换授权码获取令牌
 	codeStr, ok := code.(string)
 	if !ok {
-		return "", fmt.Errorf("code is not a string type")
+		return fmt.Errorf("code is not a string type")
 	}
 	return a.exchangeCodeForToken(codeStr)
 }
@@ -207,17 +205,17 @@ func (a *TickTickAuth) startCallbackServer(expectedState string) (interface{}, i
 
 }
 
-func (a *TickTickAuth) exchangeCodeForToken(code string) (string, error) {
+func (a *TickTickAuth) exchangeCodeForToken(code string) error {
 	// 使用授权码交换令牌
 	token, err := a.Config.Exchange(context.Background(), code)
 	if err != nil {
-		return "", fmt.Errorf("token exchange failed: %v", err)
+		return fmt.Errorf("token exchange failed: %v", err)
 	}
 	// 保存令牌到环境文件
 	if err := a.saveTokensToEnv(token.AccessToken, token.RefreshToken); err != nil {
-		return "", fmt.Errorf("error saving tokens: %w", err)
+		return fmt.Errorf("error saving tokens: %w", err)
 	}
-	return "Authentication successful! Access token obtained and saved.", nil
+	return nil
 }
 
 func (a *TickTickAuth) saveTokensToEnv(accessToken string, refreshToken string) error {

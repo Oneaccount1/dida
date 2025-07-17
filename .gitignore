@@ -15,7 +15,7 @@
 /node_modules/
 
 # 日志文件
-*.log
+*.Log
 
 # 操作系统文件
 .DS_Store

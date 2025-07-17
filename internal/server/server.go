@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"dida/internal/api"
+	"dida/internal/client"
 	"fmt"
 	"log"
 
@@ -10,18 +10,18 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-var ticktickClient *api.TickTickClient
+var ticktickClient *client.TickTickClient
 
 func InitializeClient() bool {
 	var err error
-	ticktickClient, err = api.NewTickTIckClient()
+	ticktickClient, err = client.NewTickTIckClient()
 	if err != nil {
 		log.Printf("Failed to initialize TickTick client: %v", err)
 		log.Println("Please run 'ticktick-mcp auth' to authenticate.")
 		return false
 	}
 
-	// test api connection
+	// test client connection
 	projects, err := ticktickClient.GetProjects()
 	if err != nil {
 		log.Printf("Failed to access TickTick API: %v", err)
@@ -32,7 +32,7 @@ func InitializeClient() bool {
 	return true
 }
 
-func FormatProject(project api.Project) string {
+func FormatProject(project client.Project) string {
 	formatted := fmt.Sprintf("Nmae : %s\n", project.Name)
 	formatted += fmt.Sprintf("ID: %s\n", project.ID)
 
@@ -50,7 +50,7 @@ func FormatProject(project api.Project) string {
 }
 
 // FormatTask 将任务对象格式化为可读字符串
-func FormatTask(task api.Task) string {
+func FormatTask(task client.Task) string {
 	formatted := fmt.Sprintf("ID: %s\n", task.ID)
 	formatted += fmt.Sprintf("Title: %s\n", task.Title)
 	formatted += fmt.Sprintf("Project ID: %s\n", task.ProjectID)
