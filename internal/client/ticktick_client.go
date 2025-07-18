@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/joho/godotenv"
 	"io"
 	"net/http"
 	"net/url"
@@ -13,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 // TickTickClient 定义了与TickTick API交互的客户端
@@ -23,14 +24,26 @@ type TickTickClient struct {
 	RefreshToken string
 	BaseURL      string
 	TokenURL     string
+	EnvPath      string // 环境变量文件路径
 	HTTPClient   *http.Client
 }
 
 func NewTickTIckClient() (*TickTickClient, error) {
-	// 加载环境变量
-	err := godotenv.Load()
+	// 获取环境变量文件路径
+	envPath := os.Getenv("TICKTICK_ENV_PATH")
+	if envPath == "" {
+		envPath = ".env" // 默认使用当前目录下的.env文件
+	}
+
+	// 获取环境变量文件的绝对路径
+	absEnvPath, err := filepath.Abs(envPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("获取环境变量文件绝对路径失败: %v", err)
+	}
+
+	// 加载环境变量
+	if err := godotenv.Load(absEnvPath); err != nil {
+		return nil, fmt.Errorf("加载环境变量文件失败 %s: %v", absEnvPath, err)
 	}
 
 	// 从环境变量获取凭证
@@ -62,6 +75,7 @@ func NewTickTIckClient() (*TickTickClient, error) {
 		RefreshToken: refreshToken,
 		BaseURL:      baseURL,
 		TokenURL:     tokenURL,
+		EnvPath:      absEnvPath,
 		HTTPClient:   &http.Client{Timeout: time.Second * 30},
 	}, nil
 }
@@ -123,7 +137,7 @@ func (c *TickTickClient) RefreshAccessToken() error {
 // 保存令牌到.env文件
 func (c *TickTickClient) saveTokenToEnv() error {
 	// 加载现有的.env文件内容
-	envPath := ".env"
+	envPath := c.EnvPath
 	envContent := make(map[string]string)
 
 	// 读取.env文件内容
@@ -248,6 +262,8 @@ func (c *TickTickClient) GetProjects() ([]Project, error) {
 
 	return projects, nil
 }
+
+// GetProject 获取特定项目
 func (c *TickTickClient) GetProject(projectID string) (*Project, error) {
 	body, err := c.makeRequest("GET", "/project/"+projectID, nil)
 	if err != nil {
@@ -260,16 +276,48 @@ func (c *TickTickClient) GetProject(projectID string) (*Project, error) {
 	}
 	return &project, nil
 }
-func (c *TickTickClient) GetProjectWithData(projectID string) (map[string]interface{}, error) {
+func (c *TickTickClient) GetProjectWithData(projectID string) (*ProjectData, error) {
 	body, err := c.makeRequest("GET", "/project/"+projectID+"/data", nil)
 	if err != nil {
 		return nil, err
 	}
-	var data map[string]interface{}
-	if err := json.Unmarshal(body, &data); err != nil {
+	var projectData ProjectData
+	if err := json.Unmarshal(body, &projectData); err != nil {
 		return nil, fmt.Errorf("error unmarshlling project data: %v", err)
 	}
-	return data, nil
+	return &projectData, nil
+}
+func (c *TickTickClient) CreateProject(project Project) (*Project, error) {
+	body, err := c.makeRequest("POST", "/project", project)
+	if err != nil {
+		return nil, err
+	}
+
+	var createdProject Project
+	if err := json.Unmarshal(body, &project); err != nil {
+		return nil, err
+	}
+	return &createdProject, nil
+}
+func (c *TickTickClient) UpdateProject(project Project) (*Project, error) {
+	body, err := c.makeRequest("POST", "/project/"+project.ID, project)
+	if err != nil {
+		return nil, err
+	}
+
+	var updatedProject Project
+	if err := json.Unmarshal(body, &updatedProject); err != nil {
+		return nil, err
+	}
+	return &updatedProject, nil
+
+}
+func (c *TickTickClient) DeleteProject(projectID string) error {
+	_, err := c.makeRequest("DELETE", "/project/"+projectID, "")
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // CreateTask 创建任务
@@ -283,6 +331,38 @@ func (c *TickTickClient) CreateTask(task Task) (*Task, error) {
 		return nil, fmt.Errorf("error unmarshalling created task: %v", err)
 	}
 	return &createdTask, nil
+}
+
+// UpdateTask 更新任务
+func (c *TickTickClient) UpdateTask(task Task) (*Task, error) {
+	body, err := c.makeRequest("POST", "/task/"+task.ID, task)
+	if err != nil {
+		return nil, err
+	}
+	var updatedTask Task
+
+	if err := json.Unmarshal(body, &task); err != nil {
+		return nil, fmt.Errorf("error unmarshalling updated task: %v", err)
+	}
+	return &updatedTask, nil
+}
+
+// CompletedTask 完成任务
+func (c *TickTickClient) CompletedTask(projectID, taskID string) error {
+	_, err := c.makeRequest("POST", "/project/"+projectID+"/task/"+taskID+"/complete", "")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// DeleteTask 删除任务
+func (c *TickTickClient) DeleteTask(projectID, taskID string) error {
+	_, err := c.makeRequest("DELETE", "/project/"+projectID+"/task/"+taskID, "")
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // GetTask 获取特定任务

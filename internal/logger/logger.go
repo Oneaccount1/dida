@@ -42,20 +42,11 @@ func NewLogger(logFile string, level zapcore.Level) (*Logger, error) {
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
 
-	// 创建core
-	core := zapcore.NewTee(
-		// 控制台输出
-		zapcore.NewCore(
-			zapcore.NewConsoleEncoder(encoderConfig),
-			zapcore.AddSync(os.Stdout),
-			level,
-		),
-		// 文件输出
-		zapcore.NewCore(
-			zapcore.NewJSONEncoder(encoderConfig),
-			zapcore.AddSync(file),
-			level,
-		),
+	// 创建core - 仅文件输出，移除控制台输出
+	core := zapcore.NewCore(
+		zapcore.NewJSONEncoder(encoderConfig),
+		zapcore.AddSync(file),
+		level,
 	)
 
 	// 创建Logger

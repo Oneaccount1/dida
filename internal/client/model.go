@@ -1,5 +1,7 @@
 package client
 
+import "time"
+
 // Task 表示TickTick任务
 type Task struct {
 	ID            string     `json:"id,omitempty"`
@@ -34,10 +36,35 @@ type TaskItem struct {
 
 // Project 表示TickTick项目
 type Project struct {
-	ID       string `json:"id,omitempty"`
-	Name     string `json:"name"`
-	Color    string `json:"color,omitempty"`
-	ViewMode string `json:"viewMode,omitempty"`
-	Closed   bool   `json:"closed,omitempty"`
-	Kind     string `json:"kind,omitempty"`
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name"`
+	Color     string `json:"color,omitempty"`
+	ViewMode  string `json:"viewMode,omitempty"`
+	SortOrder int64  `json:"sortOrder,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+}
+
+// ChecklistItem 表示一个待办事项清单中的子任务
+type ChecklistItem struct {
+	ID            string    `json:"id"`            // 子任务标识符
+	Title         string    `json:"title"`         // 子任务标题
+	Status        int32     `json:"status"`        // 子任务完成状态: 0=Normal, 1=Completed
+	CompletedTime time.Time `json:"completedTime"` // 子任务完成时间
+	IsAllDay      bool      `json:"isAllDay"`      // 是否全天任务
+	SortOrder     int64     `json:"sortOrder"`     // 子任务排序顺序
+	StartDate     time.Time `json:"startDate"`     // 子任务开始时间
+	TimeZone      string    `json:"timeZone"`      // 子任务时区
+}
+
+type Column struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"projectID"`
+	Name      string `json:"Name"`
+	SortOrder int64  `json:"sortOrder"`
+}
+
+type ProjectData struct {
+	Project Project
+	Tasks   []Task
+	Columns []Column
 }
