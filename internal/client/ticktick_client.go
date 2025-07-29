@@ -2,249 +2,152 @@ package client
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
+	"dida/internal/auth"
+	"dida/internal/config"
+	"dida/internal/errors"
 )
 
 // TickTickClient 定义了与TickTick API交互的客户端
 type TickTickClient struct {
-	ClientID     string
-	ClientSecret string
-	AccessToken  string
-	RefreshToken string
-	BaseURL      string
-	TokenURL     string
-	EnvPath      string // 环境变量文件路径
-	HTTPClient   *http.Client
+	config     *config.Config
+	HTTPClient *http.Client
+	auth       *auth.TickTickAuth
 }
 
-func NewTickTIckClient() (*TickTickClient, error) {
-	// 获取环境变量文件路径
-	envPath := os.Getenv("TICKTICK_ENV_PATH")
-	if envPath == "" {
-		envPath = ".env" // 默认使用当前目录下的.env文件
-	}
+func NewTickTickClient() (*TickTickClient, error) {
 
-	// 获取环境变量文件的绝对路径
-	absEnvPath, err := filepath.Abs(envPath)
+	// 加载配置
+	cfg, err := config.LoadConfig()
 	if err != nil {
-		return nil, fmt.Errorf("获取环境变量文件绝对路径失败: %v", err)
+		return nil, err
 	}
 
-	// 加载环境变量
-	if err := godotenv.Load(absEnvPath); err != nil {
-		return nil, fmt.Errorf("加载环境变量文件失败 %s: %v", absEnvPath, err)
+	// 创建HTTP客户端
+	httpClient := &http.Client{
+		Timeout: cfg.TickTick.Timeout,
+		Transport: &http.Transport{
+			MaxIdleConns:        10,
+			MaxIdleConnsPerHost: 2,
+			IdleConnTimeout:     30 * time.Second,
+		},
 	}
 
-	// 从环境变量获取凭证
-	clientID := os.Getenv("TICKTICK_CLIENT_ID")
-	clientSecret := os.Getenv("TICKTICK_CLIENT_SECRET")
-	accessToken := os.Getenv("TICKTICK_ACCESS_TOKEN")
-	refreshToken := os.Getenv("TICKTICK_REFRESH_TOKEN")
-	baseURL := os.Getenv("TICKTICK_BASE_URL")
-	tokenURL := os.Getenv("TICKTICK_TOKEN_URL")
-
-	// 设置默认值
-	if baseURL == "" {
-		baseURL = "https://api.dida365.com/open/v1"
-	}
-	if tokenURL == "" {
-		tokenURL = "https://dida365.com/oauth/token"
-
-	}
-
-	// 验证必要凭证
-	if accessToken == "" {
-		return nil, fmt.Errorf("TICKTICK_ACCESS_TOKEN not set")
+	// 创建认证管理器
+	tickAuth, err := auth.NewTickTickAuth(cfg.TickTick.ClientID, cfg.TickTick.ClientSecret)
+	if err != nil {
+		return nil, errors.Wrapf(errors.ErrClientInit, err, "failed to initialize auth manager")
 	}
 
 	return &TickTickClient{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		BaseURL:      baseURL,
-		TokenURL:     tokenURL,
-		EnvPath:      absEnvPath,
-		HTTPClient:   &http.Client{Timeout: time.Second * 30},
+		config:     cfg,
+		HTTPClient: httpClient,
+		auth:       tickAuth,
 	}, nil
 }
 func (c *TickTickClient) RefreshAccessToken() error {
-	if c.RefreshToken == "" {
-		return fmt.Errorf("no refresh token available")
+	if c.config.TickTick.RefreshToken == "" {
+		return errors.New(errors.ErrTokenRefreshFailed, "no refresh token available")
 	}
-	if c.ClientID == "" || c.ClientSecret == "" {
-		return fmt.Errorf("client ID or client secret missing")
-	}
-	// 准备token请求
-	data := url.Values{}
-	data.Set("grant_type", "refresh_token")
-	data.Set("refresh_token", c.RefreshToken)
 
-	// 准备Basic Auth验证
-	authStr := fmt.Sprintf("%s:%s", c.ClientID, c.ClientSecret)
-	authBytes := []byte(authStr)
-	authB64 := base64.StdEncoding.EncodeToString(authBytes)
-
-	// 创建请求
-	request, err := http.NewRequest("post", c.TokenURL, strings.NewReader(data.Encode()))
+	// 使用 auth 包进行令牌刷新
+	tokens, err := c.auth.RefreshAccessToken(c.config.TickTick.RefreshToken)
 	if err != nil {
-		return fmt.Errorf("error creating request: %v", err)
-	}
-	request.Header.Add("Authorization", "Basic "+authB64)
-	request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-
-	// 发送请求
-	response, err := c.HTTPClient.Do(request)
-	if err != nil {
-		return fmt.Errorf("error sending request: %v", response)
-	}
-	defer response.Body.Close()
-
-	// 检查响应状态
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
-		return fmt.Errorf("error response %s, %s", response.Status, string(body))
-	}
-	// 解析响应
-	var tokens struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token,omitempty"`
-	}
-	if err = json.NewDecoder(response.Body).Decode(&tokens); err != nil {
-		return fmt.Errorf("error parsing response: %v", err)
+		return err
 	}
 
-	// 更新令牌
-	c.AccessToken = tokens.RefreshToken
+	// 更新配置中的令牌
+	c.config.TickTick.AccessToken = tokens.AccessToken
 	if tokens.RefreshToken != "" {
-		c.RefreshToken = tokens.RefreshToken
+		c.config.TickTick.RefreshToken = tokens.RefreshToken
 	}
-	// 保存令牌到.env文件中
-	return c.saveTokenToEnv()
-}
 
-// 保存令牌到.env文件
-func (c *TickTickClient) saveTokenToEnv() error {
-	// 加载现有的.env文件内容
-	envPath := c.EnvPath
-	envContent := make(map[string]string)
-
-	// 读取.env文件内容
-	if _, err := os.Stat(envPath); err == nil {
-		content, err := os.ReadFile(envPath)
-		if err != nil {
-			return fmt.Errorf("error reading .env file:%v", err)
-		}
-
-		lines := strings.Split(string(content), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			parts := strings.SplitN(line, "=", 2)
-			if len(parts) == 2 {
-				envContent[parts[0]] = parts[1]
-			}
-		}
-	}
-	// 更新令牌
-	envContent["TICKTICK_ACCESS_TOKEN"] = c.AccessToken
-	envContent["TICKTICK_REFRESH_TOKEN"] = c.RefreshToken
-
-	// 确保客户端凭证也被保存
-	if c.ClientID != "" {
-		envContent["TICKTICK_CLIENT_ID"] = c.ClientID
-	}
-	if c.ClientSecret != "" {
-		envContent["TICKTICK_CLIENT_SECRET"] = c.ClientSecret
-	}
-	dir := filepath.Dir(envPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("error creating directory: %v", err)
-	}
-	// 写入.env文件
-	var buf bytes.Buffer
-	for key, value := range envContent {
-		buf.WriteString(fmt.Sprintf("%s=%s\n", key, value))
-	}
-	if err := os.WriteFile(envPath, buf.Bytes(), 0644); err != nil {
-		return fmt.Errorf("error writing .env file: %v", err)
-	}
 	return nil
 }
 
+// GetAccessToken 获取当前的访问令牌
+func (c *TickTickClient) GetAccessToken() string {
+	return c.config.TickTick.AccessToken
+}
 func (c *TickTickClient) makeRequest(method, endpoint string, data interface{}) ([]byte, error) {
+	// 直接执行请求
+	return c.doRequest(method, endpoint, data)
+}
+
+func (c *TickTickClient) doRequest(method, endpoint string, data interface{}) ([]byte, error) {
 	// 构建完整URL
-	url := c.BaseURL + endpoint
+	url := c.config.TickTick.BaseURL + endpoint
 
 	// 构建请求体
 	var reqBody io.Reader
 	if data != nil {
 		jsonData, err := json.Marshal(data)
 		if err != nil {
-			return nil, fmt.Errorf("error marshalling data: %v", err)
+			return nil, errors.Wrapf(errors.ErrDataMarshal, err, "failed to marshal request data")
 		}
 		reqBody = bytes.NewBuffer(jsonData)
 	}
 
 	// 创建请求
-
 	request, err := http.NewRequest(method, url, reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("error creating request: %v", err)
+		return nil, errors.Wrapf(errors.ErrAPIRequest, err, "failed to create HTTP request")
 	}
-	// set request header
-	request.Header.Set("Authorization", "Bearer "+c.AccessToken)
+
+	// 设置请求头
+	request.Header.Set("Authorization", "Bearer "+c.config.TickTick.AccessToken)
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept-Encoding", "identify")
+	request.Header.Set("Accept-Encoding", "identity")
 	request.Header.Set("User-Agent", "ticktick-mcp-go/1.0")
-	// send request
+
+	// 发送请求
 	response, err := c.HTTPClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("srror sending request: %v", err)
+		return nil, errors.Wrapf(errors.ErrAPIRequest, err, "failed to send HTTP request")
 	}
 	defer response.Body.Close()
 
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, fmt.Errorf("error reading response: %v", err)
+		return nil, errors.Wrapf(errors.ErrAPIResponse, err, "failed to read response body")
 	}
 
 	// 检查是否需要刷新令牌（如果是401未授权）
 	if response.StatusCode == http.StatusUnauthorized {
+		// 检查是否有 refresh token
+		if c.config.TickTick.RefreshToken == "" {
+			return nil, errors.New(errors.ErrTokenRefreshFailed,
+				"Access token expired and no refresh token available. Please use the oauth_authorize tool to re-authenticate.")
+		}
+
 		if err := c.RefreshAccessToken(); err != nil {
-			return nil, fmt.Errorf("error refreshing access token: %w", err)
+			return nil, errors.Wrapf(errors.ErrTokenRefreshFailed, err, "failed to refresh access token")
 		}
 
 		// 重试请求
-		request.Header.Set("Authorization", "Bearer "+c.AccessToken)
+		request.Header.Set("Authorization", "Bearer "+c.config.TickTick.AccessToken)
 		response, err = c.HTTPClient.Do(request)
 		if err != nil {
-			return nil, fmt.Errorf("error sending request after token refresh: %w", err)
+			return nil, errors.Wrapf(errors.ErrAPIRequest, err, "failed to send request after token refresh")
 		}
 		defer response.Body.Close()
 
 		body, err = io.ReadAll(response.Body)
 		if err != nil {
-			return nil, fmt.Errorf("error reading response after token refresh: %w", err)
+			return nil, errors.Wrapf(errors.ErrAPIResponse, err, "failed to read response after token refresh")
 		}
 	}
+
 	// 检查HTTP状态码
 	if response.StatusCode >= 400 {
-		return nil, fmt.Errorf("API error: %s, %s", response.Status, string(body))
+		return nil, errors.Newf(errors.ErrAPIResponse, "API error %s: %s", response.Status, string(body))
 	}
+
 	return body, nil
 }
 
